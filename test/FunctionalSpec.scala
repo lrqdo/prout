@@ -1,18 +1,6 @@
-import java.util.Base64
-
-import com.madgag.scalagithub.GitHub._
-import com.madgag.scalagithub.commands.{CreateFile, CreateRef}
-import com.madgag.scalagithub.model.{Repo, RepoId}
-import com.netaporter.uri.Uri
-import lib.RepoSnapshot.ClosedPRsMostlyRecentlyUpdated
 import lib._
 import lib.travis.TravisApiClient
 import org.eclipse.jgit.lib.ObjectId.zeroId
-import org.scalatest.Inside
-import play.api.libs.json.{JsDefined, JsString, JsSuccess}
-
-import scala.concurrent.ExecutionContext.Implicits.global
-import scala.util.Random
 
 class FunctionalSpec extends Helpers with TestRepoCreation with Inside {
 
@@ -157,6 +145,13 @@ class FunctionalSpec extends Helpers with TestRepoCreation with Inside {
         }
 
 
+      }
+    }
+
+    "be able to hit Ophan" in {
+      val checkpoint = Checkpoint("PROD", CheckpointDetails("https://dashboard.ophan.co.uk/login", Period.parse("PT1H")))
+      whenReady(CheckpointSnapshot(checkpoint)) { s =>
+        s must not be 'empty
       }
     }
   }
