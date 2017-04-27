@@ -1,47 +1,47 @@
 package controllers
 
-import akka.agent.Agent
-import lib.{Bot, RepoFullName}
-import org.kohsuke.github.GHRepository
+import java.util.concurrent.atomic.AtomicReference
+
+import com.madgag.github.Implicits._
+import com.madgag.scalagithub.GitHub._
+import com.madgag.scalagithub.model.{Repo, RepoId}
+import com.typesafe.scalalogging.LazyLogging
+import lib.Bot
+import lib.ConfigFinder.ProutConfigFileName
 import play.api.Logger
 import play.api.Play.current
 import play.api.libs.concurrent.Akka
 
-import scala.collection.convert.wrapAll._
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 import scala.concurrent.duration._
 
-case class RepoWhitelist(allKnownRepos: Set[RepoFullName], publicRepos: Set[RepoFullName])
+case class RepoWhitelist(allKnownRepos: Set[RepoId], publicRepos: Set[RepoId])
 
-object RepoWhitelistService {
-  lazy val repoWhitelist = Agent[RepoWhitelist](RepoWhitelist(Set.empty, Set.empty))
+object RepoWhitelistService extends LazyLogging {
+  implicit val github = Bot.github
 
-  def whitelist(): Future[RepoWhitelist] = repoWhitelist.future()
+  lazy val repoWhitelist = new AtomicReference[Future[RepoWhitelist]](getAllKnownRepos)
 
-  val permissionsThatCanPush = Set("admin", "push")
+  def whitelist(): Future[RepoWhitelist] = repoWhitelist.get()
 
-  private def getAllKnownRepos = {
-    val gitHub = Bot.githubCredentials.conn()
-    val organisationRepos: Set[GHRepository] = (for {
-      teamSet <- gitHub.getMyTeams.values
-      team <- teamSet if permissionsThatCanPush(team.getPermission)
-      repo <- team.listRepositories()
-    } yield repo).toSet
+  def hasProutConfigFile(repo: Repo): Future[Boolean] = for {
+    treeT <- repo.trees2.getRecursively(s"heads/${repo.default_branch}").trying
+  } yield treeT.map(_.tree.exists(_.path.endsWith(ProutConfigFileName))).getOrElse(false)
 
-    val userRepos = gitHub.getMyself.listRepositories().asList().toSet
-    val allRepos = organisationRepos ++ userRepos
-    val publicRepos = allRepos.filterNot(_.isPrivate)
+  private def getAllKnownRepos: Future[RepoWhitelist] = for { // check this to see if it always expends quota...
+    allRepos <- github.listRepos(sort="pushed", direction = "desc").takeUpTo(6)
+    proutRepos <- Future.traverse(allRepos.filter(_.permissions.exists(_.push))) { repo =>
+      hasProutConfigFile(repo).map(hasConfig => if (hasConfig) Some(repo) else None)
+    }.map(_.flatten.toSet)
+  } yield RepoWhitelist(proutRepos.map(_.repoId), proutRepos.filterNot(_.`private`).map(_.repoId))
 
-    val wl = RepoWhitelist(allRepos.map(RepoFullName(_)), publicRepos.map(RepoFullName(_)))
-    Logger.trace(s"wl=$wl")
-    wl
-  }
 
   def start() {
     Logger.info("Starting background repo fetch")
     Akka.system.scheduler.schedule(1.second, 60.seconds) {
-      repoWhitelist.send(_ => getAllKnownRepos)
+      repoWhitelist.set(getAllKnownRepos)
+      github.checkRateLimit().foreach(status => logger.info(status.summary))
     }
   }
 

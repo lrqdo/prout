@@ -16,36 +16,42 @@
 
 package lib
 
+import java.time.Instant
+import java.time.Instant.now
+import javax.net.ssl.{HostnameVerifier, SSLSession}
+
+import com.madgag.okhttpscala._
+import com.squareup.okhttp.OkHttpClient
+import com.squareup.okhttp.Request.Builder
 import lib.Config.Checkpoint
+import lib.SSL.InsecureSocketFactory
 import org.eclipse.jgit.lib.{AbbreviatedObjectId, ObjectId}
-import org.joda.time.{DateTime, ReadableInstant}
-import play.api.Logger
-import play.api.libs.ws.{WSResponse, WS}
 
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent._
+import scala.util.Try
 
 object CheckpointSnapshot {
+
+  val client = new OkHttpClient()
+  val insecureClient = new OkHttpClient().setSslSocketFactory(InsecureSocketFactory).setHostnameVerifier(new HostnameVerifier {
+    override def verify(hostname: String, sslSession: SSLSession): Boolean = true
+  })
 
   val hexRegex = """\b\p{XDigit}{40}\b""".r
 
   def apply(checkpoint: Checkpoint): Future[Iterator[AbbreviatedObjectId]] = {
-    import play.api.Play.current
 
-    val responseF: Future[WSResponse] = WS.url(checkpoint.url.toString).get()
+    val clientForCheckpoint = if (checkpoint.sslVerification) client else insecureClient
 
-    responseF.onComplete { r =>
-      Logger.info(s"XX $r")
-    }
-
-    responseF.map {
-      resp => hexRegex.findAllIn(resp.body).map(AbbreviatedObjectId.fromString)
+    clientForCheckpoint.execute(new Builder().url(checkpoint.url.toString).build()) {
+      resp => hexRegex.findAllIn(resp.body().string).map(AbbreviatedObjectId.fromString)
     }
   }
 }
 
 case class CheckpointSnapshot(
   checkpoint: Checkpoint,
-  commitId: Option[ObjectId],
-  time: ReadableInstant = DateTime.now
+  commitIdTry: Try[Option[ObjectId]],
+  time: Instant = now
 )

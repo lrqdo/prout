@@ -16,8 +16,9 @@
 
 package controllers
 
+import com.madgag.scalagithub.model.RepoId
 import lib._
-import lib.actions.Parsers
+import lib.actions.Parsers.parseGitHubHookJson
 import play.api.Logger
 import play.api.Play.current
 import play.api.cache.Cache
@@ -33,35 +34,55 @@ object Api extends Controller {
 
   val checkpointSnapshoter: CheckpointSnapshoter = CheckpointSnapshot(_)
 
-  def githubHook() = Action.async(parse.json) { request =>
-    updateFor(Parsers.parseGitHubHookJson(request.body))
+  def githubHook() = Action.async(parse.json.map(parseGitHubHookJson)) { implicit request =>
+    val repoId = request.body
+    val githubDeliveryGuid = request.headers.get("X-GitHub-Delivery")
+    Logger.info(s"githubHook repo=${repoId.fullName} githubDeliveryGuid=$githubDeliveryGuid xRequestId=$xRequestId")
+    updateFor(repoId)
   }
 
-  def updateRepo(repoOwner: String, repoName: String) = Action.async { request =>
-    updateFor(RepoFullName(repoOwner, repoName))
+  def updateRepo(repoId: RepoId) = Action.async { implicit request =>
+    Logger.info(s"updateRepo repo=${repoId.fullName} xRequestId=$xRequestId")
+    updateFor(repoId)
   }
 
-  def updateFor(repoFullName: RepoFullName): Future[Result] = {
-    Logger.debug(s"update requested for $repoFullName")
+  def xRequestId(implicit request: RequestHeader): Option[String] = request.headers.get("X-Request-ID")
+
+  def updateFor(RepoId: RepoId): Future[Result] = {
+    Logger.debug(s"update requested for $RepoId")
     for {
       whiteList <- RepoWhitelistService.whitelist()
-      update <- updateFor(repoFullName, whiteList)
+      update <- updateFor(RepoId, whiteList)
     } yield update
   }
 
-  def updateFor(repoFullName: RepoFullName, whiteList: RepoWhitelist): Future[Result] = {
+  def updateFor(repoId: RepoId, whiteList: RepoWhitelist): Future[Result] = {
     val scanGuardF = Future { // wrapped in a future to avoid timing attacks
-      val knownRepo = whiteList.allKnownRepos(repoFullName)
-      Logger.debug(s"$repoFullName known=$knownRepo")
-      require(knownRepo, s"${repoFullName.text} not on known-repo whitelist")
+      val knownRepo = whiteList.allKnownRepos(repoId)
+      Logger.debug(s"$repoId known=$knownRepo")
+      require(knownRepo, s"${repoId.fullName} not on known-repo whitelist")
 
-      Cache.getOrElse(repoFullName.text) {
-        val scheduler = new ScanScheduler(repoFullName, checkpointSnapshoter, Bot.githubCredentials.conn())
-        logger.info(s"Creating $scheduler for $repoFullName")
+      val scanScheduler = Cache.getOrElse(repoId.fullName) {
+        val scheduler = new ScanScheduler(repoId, checkpointSnapshoter, Bot.github)
+        logger.info(s"Creating $scheduler for $repoId")
         scheduler
-      }.scan()
+      }
+      Logger.debug(s"$repoId scanScheduler=$scanScheduler")
+
+      val firstScanF = scanScheduler.scan()
+
+      firstScanF.onComplete { _ => Delayer.delayTheFuture {
+        /* Do a *second* scan shortly after the first one ends, to cope with:
+         * 1. Latency in GH API
+         * 2. Checkpoint site stabilising on the new version after deploy
+         */
+          scanScheduler.scan()
+        }
+      }
+
+      firstScanF
     }
-    val mightBePrivate = !whiteList.publicRepos(repoFullName)
+    val mightBePrivate = !whiteList.publicRepos(repoId)
     if (mightBePrivate) {
       // Response must be immediate, with no private information (e.g. even acknowledging that repo exists)
       Future.successful(NoContent)
@@ -70,7 +91,7 @@ object Api extends Controller {
       for {
         scanGuard <- scanGuardF
         scan <- scanGuard
-      } yield Ok(JsArray(scan.map(summary => JsNumber(summary.pr.getNumber))))
+      } yield Ok(JsArray(scan.map(summary => JsNumber(summary.prCheckpointDetails.pr.number))))
     }
   }
 }

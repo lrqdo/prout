@@ -1,22 +1,24 @@
 package lib
 
+import com.madgag.scalagithub.model.User
+import com.madgag.scalagithub.{GitHub, GitHubCredentials}
 import com.squareup.okhttp
 import com.squareup.okhttp.OkHttpClient
-import lib.gitgithub.GitHubCredentials
 import play.api.Logger
 
+import scala.concurrent.Await
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.duration._
 import scalax.file.ImplicitConversions._
 import scalax.file.Path
 
-object Bot {
-  import play.api.Play.current
-  val config = play.api.Play.configuration.underlying
+trait Bot {
+
+  val accessToken: String
 
   val parentWorkDir = Path.fromString("/tmp") / "bot" / "working-dir"
 
   parentWorkDir.mkdirs()
-
-  val accessToken: String = config.getString("github.access.token")
 
   lazy val okHttpClient = {
     val client = new OkHttpClient
@@ -30,7 +32,22 @@ object Bot {
     client
   }
 
-  lazy val githubCredentials = new GitHubCredentials(accessToken, okHttpClient)
+  lazy val githubCredentials = GitHubCredentials.forAccessKey(accessToken, (parentWorkDir / "http-cache").toPath).get
 
-  val user = githubCredentials.conn().getMyself
+  lazy val github = new GitHub(githubCredentials)
+
+  lazy val user: User = {
+    val myself = Await.result(github.getUser(), 3 seconds)
+    Logger.info(s"Token '${accessToken.take(2)}...' gives GitHub user ${myself.atLogin}")
+    myself
+  }
+
+}
+
+object Bot extends Bot {
+  import play.api.Play.current
+  val config = play.api.Play.configuration.underlying
+
+  val accessToken: String = config.getString("github.access.token")
+
 }

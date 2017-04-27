@@ -2,48 +2,41 @@ name := "prout"
 
 version := "1.0-SNAPSHOT"
 
-scalaVersion := "2.11.4"
+scalaVersion := "2.11.8"
 
 updateOptions := updateOptions.value.withCachedResolution(true)
 
-herokuAppName in Compile := "prout-bot"
-
-herokuJdkVersion in Compile := "1.8"
-
-buildInfoSettings
-
-sourceGenerators in Compile <+= buildInfo
+resolvers += Resolver.sonatypeRepo("releases")
 
 buildInfoKeys := Seq[BuildInfoKey](
   name,
-  BuildInfoKey.constant("gitCommitId", Option(System.getenv("BUILD_VCS_NUMBER")) getOrElse(try {
+  BuildInfoKey.constant("gitCommitId", Option(System.getenv("SOURCE_VERSION")) getOrElse(try {
     "git rev-parse HEAD".!!.trim
-  } catch {
-    case e: Exception => "unknown"
-  }))
+  } catch { case e: Exception => "unknown" }))
 )
 
 buildInfoPackage := "app"
 
-lazy val root = (project in file(".")).enablePlugins(PlayScala)
+lazy val root = (project in file(".")).enablePlugins(PlayScala, BuildInfoPlugin)
 
 libraryDependencies ++= Seq(
   cache,
   filters,
   ws,
   "com.typesafe.akka" %% "akka-agent" % "2.3.2",
-  "org.webjars" % "bootstrap" % "3.2.0",
-  "com.madgag" % "github-api" % "1.59.99.1",
-  "com.github.nscala-time" %% "nscala-time" % "1.4.0",
-  "com.netaporter" %% "scala-uri" % "0.4.2",
-  "com.squareup.okhttp" % "okhttp" % "2.0.0",
-  "com.squareup.okhttp" % "okhttp-urlconnection" % "2.0.0",
+  "org.webjars" % "bootstrap" % "3.3.2-1",
+  "com.getsentry.raven" % "raven-logback" % "7.6.0",
+  "com.github.nscala-time" %% "nscala-time" % "2.0.0",
+  "com.netaporter" %% "scala-uri" % "0.4.7",
+  "com.typesafe.scala-logging" %% "scala-logging" % "3.1.0",
   "com.github.scala-incubator.io" %% "scala-io-file" % "0.4.3-1",
-  "org.eclipse.jgit" % "org.eclipse.jgit" % "3.5.1.201410131835-r",
-  "com.madgag.scala-git" %% "scala-git" % "2.7",
-  "com.madgag.scala-git" %% "scala-git-test" % "2.5" % "test",
-  "org.scalatestplus" %% "play" % "1.1.0" % "test"
-)     
+  "org.webjars.bower" % "octicons" % "3.1.0",
+  "com.madgag" %% "play-git-hub" % "3.27",
+  "com.madgag.scala-git" %% "scala-git-test" % "3.0" % "test",
+  "org.scalatestplus" %% "play" % "1.4.0" % "test"
+)
+
+routesImport ++= Seq("com.madgag.scalagithub.model._","com.madgag.playgithub.Binders._")
 
 sources in (Compile,doc) := Seq.empty
 

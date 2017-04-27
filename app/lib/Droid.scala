@@ -1,29 +1,30 @@
 package lib
 
-import org.kohsuke.github.GHRepository
+import com.madgag.git._
+import com.madgag.scalagithub.model.Repo
 import play.api.Logger
 
-import scala.collection.immutable.Seq
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 
 class Droid {
 
+  val logger = Logger(getClass)
+
   def scan(
-    githubRepo: GHRepository
-  )(implicit checkpointSnapshoter: CheckpointSnapshoter): Future[Seq[PullRequestCheckpointsSummary]] = {
-    Logger.info(s"Asked to audit ${githubRepo.getFullName}")
+    githubRepo: Repo
+  )(implicit checkpointSnapshoter: CheckpointSnapshoter): Future[Seq[PullRequestCheckpointsStateChangeSummary]] = {
+    logger.info(s"Asked to audit ${githubRepo.repoId}")
 
     val repoSnapshotF = RepoSnapshot(githubRepo)
 
     for {
       repoSnapshot <- repoSnapshotF
-      pullRequestUpdates <- Future.traverse(repoSnapshot.mergedPullRequests)(repoSnapshot.issueUpdater.process)
+      pullRequestUpdates <- repoSnapshot.processMergedPullRequests()
       activeSnapshots <- repoSnapshot.activeSnapshotsF
     } yield {
-      Logger.info(s"affectedFoldersByPullRequest=${repoSnapshot.pullRequestsByAffectedFolder.mapValues(_.map(_.getNumber))}")
-      Logger.info(s"${activeSnapshots.size} activeSnapshots : ${activeSnapshots.map(s => s.checkpoint.name -> s.commitId.map(_.name()).getOrElse("None")).toMap}")
-      pullRequestUpdates.flatten
+      logger.info(s"${githubRepo.repoId} has ${activeSnapshots.size} active snapshots : ${activeSnapshots.map(s => s.checkpoint.name -> s.commitIdTry.map(_.map(_.shortName).getOrElse("None"))).toMap}")
+      pullRequestUpdates
     }
   }
 

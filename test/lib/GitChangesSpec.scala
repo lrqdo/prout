@@ -38,5 +38,16 @@ class GitChangesSpec extends PlaySpec {
 
       affectedFolders(commitAt("master"), commitAt("del-baz-thing"), fooBarBaz) mustEqual(Set("/baz/"))
     }
+
+    "not confuse changes on master with changes on the feature branch" in {
+      implicit val localGitRepo: Repository = test.unpackRepo("/multi-project.master-updated-before-feature-merged.git.zip")
+      implicit val (revWalk, reader) = localGitRepo.singleThreadedReaderTuple
+
+      def commitAt(revstr: String) = localGitRepo.resolve(revstr).asRevCommit
+
+      affectedFolders(commitAt("master"), commitAt("food-feature"), Set("/food/")) mustEqual(Set("/food/"))
+
+      affectedFolders(commitAt("master"), commitAt("bard-feature"), Set("/food/")) mustBe empty
+    }
   }
 }

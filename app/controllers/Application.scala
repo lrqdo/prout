@@ -16,12 +16,31 @@
 
 package controllers
 
+import com.madgag.scalagithub.model.RepoId
+import lib.actions.Actions
+import lib.{Bot, RepoSnapshot}
 import play.api.mvc._
+
+import scala.concurrent.ExecutionContext.Implicits.global
 
 object Application extends Controller {
 
   def index = Action { implicit req =>
     Ok(views.html.userPages.index())
+  }
+
+  def zoomba(repoId: RepoId) = Actions.repoAuthenticated(repoId).async { implicit req =>
+    implicit val checkpointSnapshoter = Api.checkpointSnapshoter
+    for {
+      wl <- RepoWhitelistService.repoWhitelist.get()
+      repoFetchedByProut <- Bot.github.getRepo(repoId)
+      proutPresenceQuickCheck <- RepoWhitelistService.hasProutConfigFile(repoFetchedByProut)
+      repoSnapshot <- RepoSnapshot(repoFetchedByProut)
+      diagnostic <- repoSnapshot.diagnostic()
+    } yield {
+      val known = wl.allKnownRepos(repoId)
+      Ok(views.html.userPages.repo(proutPresenceQuickCheck, repoSnapshot, diagnostic))
+    }
   }
 
 }
